@@ -1,0 +1,184 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Real-time Document Editor</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 20px;
+        }
+        #document-form {
+            margin-bottom: 20px;
+        }
+        #message-popup {
+            display: none;
+            position: fixed;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background-color: #f0f0f0;
+            padding: 20px;
+            border: 1px solid #ccc;
+            border-radius: 5px;
+            box-shadow: 0 0 10px rgba(0, 0, 0, 0.2);
+        }
+    </style>
+</head>
+<body>
+    <form id="document-form">
+        <label for="document-title">Document Title:</label>
+        <input type="text" id="document-title" placeholder="Enter document title" required>
+        <input type="hidden" id="current-document-id">
+        <br>
+        <label for="document-content">Document Content:</label>
+        <textarea id="document-content" placeholder="Enter document content" rows="4" required></textarea>
+       
+        <button type="button" id="create-document-btn">Create Document</button>
+    </form>
+
+    <ul id="document-list"></ul>
+
+    <div id="document-content-display">
+        <h2 id="document-title-display"></h2>
+        <p id="document-content-display"></p>
+        <button type="button" id="download-document-btn" style="display: none;">Download PDF</button>
+    </div>
+
+    <div id="message-popup"></div>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.1.3/socket.io.js"></script>
+    <script>
+        const urlParams = new URLSearchParams(window.location.search);
+        const userId = urlParams.get('userId');
+
+        if (!userId) {
+            window.location.href = '/login';
+        }
+
+        const socket = io({ query: { userId } });
+
+        socket.on('all-documents', (documents) => {
+            const documentList = document.getElementById('document-list');
+            documentList.innerHTML = ''; // Clear previous items
+
+            documents.forEach(doc => {
+                const listItem = document.createElement('li');
+                const link = document.createElement('a');
+                link.href = '#';
+                link.textContent = doc.title;
+                link.addEventListener('click', () => loadDocument(doc._id, doc.title));
+                listItem.appendChild(link);
+                documentList.appendChild(listItem);
+            });
+        });
+
+        document.getElementById('create-document-btn').addEventListener('click', createDocument);
+
+        function createDocument() {
+            const title = document.getElementById('document-title').value;
+            const content = document.getElementById('document-content').value;
+
+            socket.emit('create-document', { title, content, userId }, (error) => {
+                if (error) {
+                    console.error('Error creating document:', error);
+                }
+            });
+        }
+
+        function loadDocument(documentId, documentTitle) {
+            socket.emit('get-document-content', { documentId, documentTitle, userId });
+            document.getElementById('current-document-id').value = documentId;
+        }
+
+        document.getElementById('document-content').addEventListener('input', updateDocument);
+
+        function updateDocument() {
+            const documentId = document.getElementById('current-document-id').value;
+            const content = document.getElementById('document-content').value;
+
+            if (documentId && typeof documentId === 'string') {
+                socket.emit('update-document', { documentId, content }, (error) => {
+                    if (error) {
+                        console.error('Error updating document:', error);
+                    }
+                });
+            } else {
+                console.error('Invalid documentId:', documentId);
+            }
+        }
+
+        socket.on('document-content', (data) => {
+            const documentTitleDisplay = document.getElementById('document-title-display');
+            const documentContentDisplay = document.getElementById('document-content-display');
+            const downloadBtn = document.getElementById('download-document-btn');
+
+            documentTitleDisplay.textContent = data.title;
+            documentContentDisplay.textContent = data.content;
+            downloadBtn.setAttribute('onclick', `downloadDocument('${data.id}', '${data.title}')`);
+            downloadBtn.style.display = 'block';
+
+            document.getElementById('document-title').value = data.title; // Update document title field
+            document.getElementById('document-content').value = data.content;
+            document.getElementById('current-document-id').value = data.id;
+        });
+
+        socket.on('document-created', (data) => {
+            const documentList = document.getElementById('document-list');
+            const listItem = document.createElement('li');
+            const link = document.createElement('a');
+            link.href = '#';
+            link.textContent = data.title;
+            link.addEventListener('click', () => loadDocument(data.id, data.title));
+            listItem.appendChild(link);
+            documentList.appendChild(listItem);
+            
+            const documentContent = document.getElementById('document-content-display');
+            documentContent.innerHTML = `<h2>${data.title}</h2><p>${data.content}</p>`;
+        });
+
+        socket.on('document-updated', (data) => {
+            const documentContent = document.getElementById('document-content-display');
+            documentContent.innerHTML = `<h2>${data.title}</h2><p>${data.content}</p>`;
+        });
+
+        socket.on('unauthorized', (data) => {
+            console.error('Unauthorized access:', data.message);
+            const messagePopup = document.getElementById('message-popup');
+            messagePopup.innerHTML = `<p>${data.message}</p>`;
+            messagePopup.style.display = 'block';
+
+            // Hide the message popup after 3 seconds
+            setTimeout(() => {
+                messagePopup.style.display = 'none';
+            }, 3000);
+        });
+
+        // Function to download the PDF document
+        function downloadDocument(documentId, documentTitle) {
+            fetch(`/document/download-pdf/${documentId}`)
+                .then(response => {
+                    if (!response.ok) {
+                        throw new Error('Failed to download PDF');
+                    }
+                    return response.blob();
+                })
+                .then(blob => {
+                    // Create a temporary anchor element
+                    const url = window.URL.createObjectURL(blob);
+                    const a = document.createElement('a');
+                    a.href = url;
+                    a.download = `${documentTitle}.pdf`;
+                    document.body.appendChild(a);
+                    a.click();
+                    window.URL.revokeObjectURL(url);
+                    document.body.removeChild(a);
+                })
+                .catch(error => {
+                    console.error('Error downloading PDF:', error);
+                });
+        }
+    </script>
+</body>
+</html>
