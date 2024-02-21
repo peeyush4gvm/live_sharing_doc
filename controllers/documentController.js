@@ -1,4 +1,4 @@
-const Document = require('../models/userModel');
+const Document = require('../models/documentModel');
 const PDFDocument = require('pdfkit');
 const fs = require('fs');
 const path = require('path');
@@ -78,7 +78,7 @@ async function grantPermissionRoute(req, res) {
         const documentId = req.params.documentId;
 
         const document = await Document.findById(documentId);
-
+       
         if (!document || (document.owner && !document.owner.equals(userId)) || 
             (document.allowedUsers && document.allowedUsers.includes(userIdToAdd))) {
             return res.status(403).json({ Message: messages.error.UNAUTHORIZED });

@@ -24,6 +24,14 @@
             border-radius: 5px;
             box-shadow: 0 0 10px rgba(0, 0, 0, 0.2);
         }
+        #active-users-list {
+            margin-top: 20px;
+        }
+        /* Style for unauthorized message */
+        #unauthorized-message {
+            color: red;
+            margin-top: 10px;
+        }
     </style>
 </head>
 <body>
@@ -46,126 +54,145 @@
         <button type="button" id="download-document-btn" style="display: none;">Download PDF</button>
     </div>
 
+    <div id="active-users-list">
+        <h3>Active Users</h3>
+        <ul id="active-users"></ul>
+    </div>
+
+    <!-- Unauthorized message -->
     <div id="message-popup"></div>
+    <div id="unauthorized-message"></div>
 
     <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.1.3/socket.io.js"></script>
     <script>
         const urlParams = new URLSearchParams(window.location.search);
         const userId = urlParams.get('userId');
-
-        if (!userId) {
-            window.location.href = '/login';
-        }
-
         const socket = io({ query: { userId } });
 
-        socket.on('all-documents', (documents) => {
-            const documentList = document.getElementById('document-list');
-            documentList.innerHTML = ''; // Clear previous items
+        const documentList = document.getElementById('document-list');
+        const documentTitleInput = document.getElementById('document-title');
+        const documentContentInput = document.getElementById('document-content');
+        const currentDocumentIdInput = document.getElementById('current-document-id');
+        const activeUsersList = document.getElementById('active-users');
 
-            documents.forEach(doc => {
-                const listItem = document.createElement('li');
-                const link = document.createElement('a');
-                link.href = '#';
-                link.textContent = doc.title;
-                link.addEventListener('click', () => loadDocument(doc._id, doc.title));
-                listItem.appendChild(link);
-                documentList.appendChild(listItem);
-            });
+        // Set to store active user IDs
+        const activeUserIds = new Set();
+
+        // Update active users list
+        socket.on('active-users', ({ activeUsers }) => {
+            activeUserIds.clear();
+            activeUsers.forEach(user => activeUserIds.add(user));
+            renderActiveUsers();
         });
 
+        // Remove user from active users list when leaving a document
+        socket.on('leave-document', ({ userId }) => {
+            activeUserIds.delete(userId);
+            renderActiveUsers();
+        });
+
+        // Render active users list
+        function renderActiveUsers() {
+            activeUsersList.innerHTML = [...activeUserIds].map(user => `<li>${user}</li>`).join('');
+        }
+
+        // Populate document list
+        socket.on('all-documents', (documents) => {
+            documentList.innerHTML = documents.map(doc => `<li><a href="#" data-id="${doc._id}">${doc.title}</a></li>`).join('');
+        });
+
+        // Create a new document
         document.getElementById('create-document-btn').addEventListener('click', createDocument);
 
         function createDocument() {
-            const title = document.getElementById('document-title').value;
-            const content = document.getElementById('document-content').value;
-
+            const title = documentTitleInput.value;
+            const content = documentContentInput.value;
             socket.emit('create-document', { title, content, userId }, (error) => {
-                if (error) {
-                    console.error('Error creating document:', error);
-                }
+                if (error) console.error('Error creating document:', error);
             });
         }
 
+        // Handle document selection
+        documentList.addEventListener('click', (event) => {
+            if (event.target.tagName === 'A') {
+                const documentId = event.target.dataset.id;
+                const documentTitle = event.target.textContent;
+                loadDocument(documentId, documentTitle);
+                socket.emit('join-document', { documentId });
+            }
+        });
+
+        // Load document content
         function loadDocument(documentId, documentTitle) {
-            socket.emit('get-document-content', { documentId, documentTitle, userId });
-            document.getElementById('current-document-id').value = documentId;
-        }
-
-        document.getElementById('document-content').addEventListener('input', updateDocument);
-
-        function updateDocument() {
-            const documentId = document.getElementById('current-document-id').value;
-            const content = document.getElementById('document-content').value;
-
-            if (documentId && typeof documentId === 'string') {
-                socket.emit('update-document', { documentId, content }, (error) => {
-                    if (error) {
-                        console.error('Error updating document:', error);
-                    }
-                });
-            } else {
-                console.error('Invalid documentId:', documentId);
+            if (documentId !== currentDocumentIdInput.value) {
+                socket.emit('get-document-content', { documentId, documentTitle, userId });
+                currentDocumentIdInput.value = documentId;
             }
         }
 
-        socket.on('document-content', (data) => {
-            const documentTitleDisplay = document.getElementById('document-title-display');
-            const documentContentDisplay = document.getElementById('document-content-display');
-            const downloadBtn = document.getElementById('download-document-btn');
-
-            documentTitleDisplay.textContent = data.title;
-            documentContentDisplay.textContent = data.content;
-            downloadBtn.setAttribute('onclick', `downloadDocument('${data.id}', '${data.title}')`);
-            downloadBtn.style.display = 'block';
-
-            document.getElementById('document-title').value = data.title; // Update document title field
-            document.getElementById('document-content').value = data.content;
-            document.getElementById('current-document-id').value = data.id;
+        // Update document content
+        documentContentInput.addEventListener('input', () => {
+            const documentId = currentDocumentIdInput.value;
+            const content = documentContentInput.value;
+            if (documentId) socket.emit('update-document', { documentId, content });
         });
 
+        // Handle document content updates
+        socket.on('document-content', ({ id, title, content }) => {
+            documentTitleInput.value = title;
+            documentContentInput.value = content;
+            currentDocumentIdInput.value = id;
+            document.getElementById('document-title-display').textContent = title;
+            document.getElementById('document-content-display').textContent = content;
+            document.getElementById('download-document-btn').setAttribute('onclick', `downloadDocument('${id}', '${title}')`);
+            document.getElementById('download-document-btn').style.display = 'block';
+        });
+
+        // Handle document creation
         socket.on('document-created', (data) => {
-            const documentList = document.getElementById('document-list');
             const listItem = document.createElement('li');
             const link = document.createElement('a');
             link.href = '#';
             link.textContent = data.title;
-            link.addEventListener('click', () => loadDocument(data.id, data.title));
+            link.dataset.id = data.id;
             listItem.appendChild(link);
             documentList.appendChild(listItem);
-            
-            const documentContent = document.getElementById('document-content-display');
-            documentContent.innerHTML = `<h2>${data.title}</h2><p>${data.content}</p>`;
+            loadDocument(data.id, data.title);
         });
 
-        socket.on('document-updated', (data) => {
-            const documentContent = document.getElementById('document-content-display');
-            documentContent.innerHTML = `<h2>${data.title}</h2><p>${data.content}</p>`;
+        // Handle document updates
+        socket.on('document-updated', ({ title, content }) => {
+            document.getElementById('document-title-display').textContent = title;
+            document.getElementById('document-content-display').textContent = content;
         });
 
-        socket.on('unauthorized', (data) => {
-            console.error('Unauthorized access:', data.message);
+        // Handle unauthorized access
+        socket.on('unauthorized', ({ message }) => {
+            console.error('Unauthorized access:', message);
             const messagePopup = document.getElementById('message-popup');
-            messagePopup.innerHTML = `<p>${data.message}</p>`;
+            messagePopup.innerHTML = `<p>${message}</p>`;
             messagePopup.style.display = 'block';
-
-            // Hide the message popup after 3 seconds
+            const unauthorizedMessage = document.getElementById('unauthorized-message');
+            unauthorizedMessage.textContent = message;
+            unauthorizedMessage.style.display = 'block';
+            documentContentInput.disabled = true;
             setTimeout(() => {
                 messagePopup.style.display = 'none';
+                unauthorizedMessage.textContent = '';
+                unauthorizedMessage.style.display = 'none';
+                documentContentInput.disabled = false;
             }, 3000);
         });
+        
 
-        // Function to download the PDF document
+        // Download PDF document
         function downloadDocument(documentId, documentTitle) {
             fetch(`/document/download-pdf/${documentId}`)
                 .then(response => {
-                    if (!response.ok) {
-                        throw new Error('Failed to download PDF');
-                    }
+                    if (!response.ok) throw new Error('Failed to download PDF');
                     return response.blob();
                 })
                 .then(blob => {
-                    // Create a temporary anchor element
                     const url = window.URL.createObjectURL(blob);
                     const a = document.createElement('a');
                     a.href = url;
